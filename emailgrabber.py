@@ -36,12 +36,29 @@ def process_unpledge(subject,author):
     return
 
 def process_buy(subject,author):
-    command,tag,amount
+    command,group,tag,amount = subject.split()
     if amount.startswith('$'):
         amount = float(amount[1:])
     else:
         amount = float(amount)
-    pass
+    if tag not in redis.sunion(group+'.purchases',group+'.proposals'):
+        pledgedcash = 0.0
+        for user in redis.smembers('group.'+group):
+            pledgedcash += float(redis.get(user+'.'+group))
+        usedcash = float(redis.get('group.'+group+'.usedcash'))
+        if (usedcash + amount) > pledgedcash:
+            #what a dick
+            return
+        redis.sadd(group+'.'+tag,author)
+        redis.sadd(group+'.proposals')
+    elif tag in redis.smembers(group+'.purchases'):
+        redis.sadd(group+'.'+tag,author)
+    elif tag in redis.smembers(group+'.proposals'):
+        redis.sadd(group+'.'+tag,author)
+        if redis.scard(group+'.'+tag) > (redis.scard('group.'+group)/2):
+            #Atomic move to purchased
+            #do puchasing stuff
+            pass
 
 credfile = open('credfile','r')
 USER,PASS,IMAP_SERVER,PORT_STRING = [x.strip() for x in credfile.readlines()]
