@@ -56,9 +56,16 @@ def process_buy(subject,author):
     elif tag in redis.smembers(group+'.proposals'):
         redis.sadd(group+'.'+tag,author)
         if redis.scard(group+'.'+tag) > (redis.scard('group.'+group)/2):
-            #Atomic move to purchased
+            redis.smove(group+'.proposals',group+'.purchases',tag)
+            pledgedcash = 0.0
+            for user in redis.smembers('group.'+group):
+                pledgedcash += float(redis.get(user+'.'+group))
+            usedcash = float(redis.get('group.'+group+'.usedcash'))
+            if (usedcash + amount) > pledgedcash:
+                #what a dick
+                return
+            redis.incrbyfloat('group.'+group+'.usedcash',amount)
             #do puchasing stuff
-            pass
 
 credfile = open('credfile','r')
 USER,PASS,IMAP_SERVER,PORT_STRING = [x.strip() for x in credfile.readlines()]
