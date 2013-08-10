@@ -5,67 +5,87 @@ import email
 import japan_parse
 
 def process_pledge(subject,author):
-    tagname,amount,group = subject.split()
-    if amount.startswith('$'):
-        amount = float(amount[1:])
-    else:
-        amount = float(amount)
+    try:
+        amount,group = subject.split()[1:]
+        if amount.startswith('$'):
+            amount = float(amount[1:])
+        else:
+            amount = float(amount)
+        if amount <= 0:
+            raise ValueError('Amount pledged must be a positive number')
+    except ValueError:
+        #notify of idiocy
+        return
     moneyleft = redis.incrbyfloat(author+'.cash',-1*amount)
     if moneyleft<0:
         moneyleft = redis.incrbyfloat(author+'.cash',amount)
         #No, no, no
         return
     pledge = redis.incrbyfloat(author+'.'+group,amount)
-    redis.sadd('group.'+group,author)
+    redis.sadd('group.'+group+'.backers',author)
     return
 
 def process_unpledge(subject,author):
-    tagname,amount,group = subject.split()
-    if amount.startswith('$'):
-        amount = float(amount[1:])
-    else:
-        amount = float(amount)
+    try:
+        amount,group = subject.split()[1:]
+        if amount.startswith('$'):
+            amount = float(amount[1:])
+        else:
+            amount = float(amount)
+        if amount <= 0:
+            raise ValueError('Amount pledged must be a positive number')
+    except ValueError:
+        #notify of idiocy
+        return
+    #remove money from the pledge
     moneyleft = redis.incrbyfloat(author+'.'+group,-1*amount)
     if moneyleft<0:
         moneyleft = redis.incrbyfloat(author+'.'+group,amount)
         #No, no, no
         return
-    if moneleft == 0:
-        redis.srem('group.'+group,author)
+    if moneyleft == 0:
+        redis.srem('group.'+group+'.backers',author)
     pledge = redis.incrbyfloat(author+'.cash',amount)
     return
 
 def process_buy(subject,author):
-    command,group,tag,amount = subject.split()
-    if amount.startswith('$'):
-        amount = float(amount[1:])
-    else:
-        amount = float(amount)
+    try:
+        group,tag,amount = subject.split()[1:]
+        if amount.startswith('$'):
+            amount = float(amount[1:])
+        else:
+            amount = float(amount)
+        if amount <= 0:
+            raise ValueError('Amount pledged must be a positive number')
+    except ValueError:
+        #notify of idiocy
+        return
+    # new proposal for purchase
     if tag not in redis.sunion(group+'.purchases',group+'.proposals'):
-        pledgedcash = 0.0
-        for user in redis.smembers('group.'+group):
-            pledgedcash += float(redis.get(user+'.'+group))
-        usedcash = float(redis.get('group.'+group+'.usedcash'))
-        if (usedcash + amount) > pledgedcash:
-            #what a dick
-            return
-        redis.sadd(group+'.'+tag,author)
-        redis.sadd(group+'.proposals')
+        redis.sadd('buy.'+group+'.'+tag,author)
+        redis.sadd(group+'.proposals',tag)
+    #someone came late to the party
     elif tag in redis.smembers(group+'.purchases'):
-        redis.sadd(group+'.'+tag,author)
+        redis.sadd('buy.'+group+'.'+tag,author)
+    #people voting for the proposal
     elif tag in redis.smembers(group+'.proposals'):
-        redis.sadd(group+'.'+tag,author)
-        if redis.scard(group+'.'+tag) > (redis.scard('group.'+group)/2):
-            redis.smove(group+'.proposals',group+'.purchases',tag)
-            pledgedcash = 0.0
-            for user in redis.smembers('group.'+group):
-                pledgedcash += float(redis.get(user+'.'+group))
-            usedcash = float(redis.get('group.'+group+'.usedcash'))
-            if (usedcash + amount) > pledgedcash:
-                #what a dick
-                return
-            redis.incrbyfloat('group.'+group+'.usedcash',amount)
-            #do puchasing stuff
+        redis.sadd('buy.'+group+'.'+tag,author)
+        #if we have a majority to buy, pull the trigger
+        if redis.scard('buy.'+group+'.'+tag) > (redis.scard('group.'+group+'.backers')/2):
+            try:
+                pledgedcash = 0.0
+                for user in redis.smembers('group.'+group+'.backers'):
+                    pledgedcash += float(redis.get('user.'+user+'.'+group))
+                usedcash = float(redis.incrbyfloat('group.'+group+'.backers'+'.usedcash',amount))
+                if (usedcash) > pledgedcash:
+                    #what a dick
+                    redis.incrbyfloat('group.'+group+'.backers'+'.usedcash',-1*amount)
+                    #need to notify of insufficient funds
+                    return
+                redis.smove(group+'.proposals',group+'.purchases',tag)
+                #do puchasing stuff
+            except redis.exceptions.ResponseError:
+                #someone is already doing that
 
 credfile = open('credfile','r')
 USER,PASS,IMAP_SERVER,PORT_STRING = [x.strip() for x in credfile.readlines()]
