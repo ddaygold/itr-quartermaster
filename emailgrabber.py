@@ -11,8 +11,9 @@ IMAP_PORT = int(IMAP_PORT_STRING)
 SMTP_PORT = int(SMTP_PORT_STRING)
 sender =smtplib.SMTP_SSL(SMTP_SERVER, SMTP_PORT)
 sender.login(USER,PASS)
+r = redis.Redis()
 
-def process_pledge(subject,author,r):
+def process_pledge(subject,author):
     try:
         amount,group = subject.split()[1:]
         if amount.startswith('$'):
@@ -38,7 +39,7 @@ def process_pledge(subject,author,r):
     success_notifier(subject,author)
     return
 
-def process_unpledge(subject,author,r):
+def process_unpledge(subject,author):
     try:
         amount,group = subject.split()[1:]
         if amount.startswith('$'):
@@ -66,7 +67,7 @@ def process_unpledge(subject,author,r):
     success_notifier(subject,author)
     return
 
-def process_buy(subject,author,r):
+def process_buy(subject,author):
     try:
         group,tag,amount = subject.split()[1:]
         if amount.startswith('$'):
@@ -95,7 +96,7 @@ def process_buy(subject,author,r):
     #people voting for the proposal
     elif tag in r.smembers(group+'.proposals'):
         r.sadd('buy.'+group+'.'+tag,author)
-        success_notifier(subject,author,'Added '+user+' to '+ tag + \
+        success_notifier(subject,author,'Added '+author+' to '+ tag + \
             'he/she is voter'+str(r.scard('buy.'+group+'.'+tag))+ \
             'minimum for passage is '+str(r.scard('group.'+group+'.backers')/2
 +1))
@@ -105,7 +106,7 @@ def process_buy(subject,author,r):
                 purchased')
             try:
                 r.smove(group+'.proposals',group+'.purchases',tag)
-                pledgedcash = count_pledgemoney(group,r)
+                pledgedcash = count_pledgemoney(group)
                 usedcash = float(r.incrbyfloat('group.'+group+'.usedcash', \
                         float(r.get('cost.'+group+'.'+tag))))
                 if (usedcash) > pledgedcash:
@@ -120,13 +121,15 @@ def process_buy(subject,author,r):
             except:
                 pass
 
-def count_pledgemoney(group, r):
+def count_pledgemoney(group):
     pledgedcash = 0.0
     for user in r.smembers('group.'+group+'.backers'):
         pledgedcash += float(r.get('user.'+user+'.'+group))
     return pledgedcash
 
 def garbage_notifier(subject,author):
+    if r.get('testing') == 'TRUE':
+        return
     msg = emailmessage.Message()
     msg['To'] = MAILING_LIST
     msg['From'] = USER
@@ -134,6 +137,9 @@ def garbage_notifier(subject,author):
     sender.sendmail(USER,MAILING_LIST,str(msg))
 
 def success_notifier(subject,author,body=None):
+    print 'testing:',r.get('testing')
+    if r.get('testing') == 'TRUE':
+        return
     msg = emailmessage.Message()
     msg['To'] = MAILING_LIST
     msg['From'] = USER
@@ -144,13 +150,9 @@ def success_notifier(subject,author,body=None):
         sender.sendmail(USER,MAILING_LIST,str(msg))
 
 def main():
-
     recv = imaplib.IMAP4_SSL(IMAP_SERVER,IMAP_PORT)
     recv.login(USER,PASS)
     recv.select()
-
-    r = redis.Redis()
-
     typ, data = recv.search(None, 'ALL')
     data_set = set(int(x) for x in data[0].split())
     r_set = set(int(x) for x in r.smembers('read'))
@@ -163,11 +165,11 @@ def main():
         print 'working on',subject
         author = message['From']
         if subject.startswith('PLEDGE'):
-            process_pledge(subject,author,r)
+            process_pledge(subject,author)
         if subject.startswith('UNPLEDGE'):
-            process_unpledge(subject,author,r)
+            process_unpledge(subject,author)
         if subject.startswith('BUY'):
-            process_buy(subject,author,r)
+            process_buy(subject,author)
         r.sadd('read',target)
     sender.quit()
 
