@@ -3,11 +3,14 @@ import imaplib
 import smtplib
 import sys
 import email
+import email.message as emailmessage
 
 credfile = open('credfile','r')
 USER,PASS,MAILING_LIST,IMAP_SERVER,IMAP_PORT_STRING,SMTP_SERVER,SMTP_PORT_STRING = [x.strip() for x in credfile.readlines()]
 IMAP_PORT = int(IMAP_PORT_STRING)
 SMTP_PORT = int(SMTP_PORT_STRING)
+sender =smtplib.SMTP_SSL(SMTP_SERVER, SMTP_PORT)
+sender.login(USER,PASS)
 
 def process_pledge(subject,author,r):
     try:
@@ -83,11 +86,11 @@ def process_buy(subject,author,r):
         r.sadd(group+'.proposals',tag)
         r.set('cost.'+group+'.'+tag,amount)
         success_notifier(subject,author,'Added a new purchasing \
-            proposal: '+tag+' at $'+amount)
+            proposal: '+tag+' at $'+str(amount))
     #someone came late to the party
     elif tag in r.smembers(group+'.purchases'):
         r.sadd('buy.'+group+'.'+tag,author)
-        success_notifier(subject,author,'Added '+user+' to '+ tag + \
+        success_notifier(subject,author,'Added '+author+' to '+ tag + \
             'however, enough votes already existed.')
     #people voting for the proposal
     elif tag in r.smembers(group+'.proposals'):
@@ -124,27 +127,21 @@ def count_pledgemoney(group, r):
     return pledgedcash
 
 def garbage_notifier(subject,author):
-    message = email.message.Message()
-    message['To'] = MAILING_LIST
-    message['From'] = USER
-    message['Subject'] = 'Error while working on: '+subject+' from '+author
-    sender =smtplib.SMTP_SSL(SMTP_SERVER, SMTP_PORT)
-    sender.login(USER,PASS)
-    sender.sendmail(USER,MAILING_LIST,str(message))
-    sender.quit()
+    msg = emailmessage.Message()
+    msg['To'] = MAILING_LIST
+    msg['From'] = USER
+    msg['Subject'] = 'Error while working on: '+subject+' from '+author
+    sender.sendmail(USER,MAILING_LIST,str(msg))
 
 def success_notifier(subject,author,body=None):
-    message = email.message.Message()
-    message['To'] = MAILING_LIST
-    message['From'] = USER
-    message['Subject'] = subject+' from '+author+' acknowledged'
-    sender =smtplib.SMTP_SSL(SMTP_SERVER, SMTP_PORT)
-    sender.login(USER,PASS)
+    msg = emailmessage.Message()
+    msg['To'] = MAILING_LIST
+    msg['From'] = USER
+    msg['Subject'] = subject+' from '+author+' acknowledged'
     if body is not None:
-        sender.sendmail(USER,MAILING_LIST,str(message)+'\r\n'+body)
+        sender.sendmail(USER,MAILING_LIST,str(msg)+'\r\n'+body)
     else:
-        sender.sendmail(USER,MAILING_LIST,str(message))
-    sender.quit()
+        sender.sendmail(USER,MAILING_LIST,str(msg))
 
 def main():
 
@@ -172,6 +169,7 @@ def main():
         if subject.startswith('BUY'):
             process_buy(subject,author,r)
         r.sadd('read',target)
+    sender.quit()
 
 if __name__ == "__main__":
         main()
