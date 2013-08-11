@@ -68,6 +68,7 @@ def process_buy(subject,author,r):
     if tag not in r.sunion(group+'.purchases',group+'.proposals'):
         r.sadd('buy.'+group+'.'+tag,author)
         r.sadd(group+'.proposals',tag)
+        r.set('cost.'+group+'.'+tag,amount)
     #someone came late to the party
     elif tag in r.smembers(group+'.purchases'):
         r.sadd('buy.'+group+'.'+tag,author)
@@ -79,10 +80,12 @@ def process_buy(subject,author,r):
             try:
                 r.smove(group+'.proposals',group+'.purchases',tag)
                 pledgedcash = count_pledgemoney(group,r)
-                usedcash = float(r.incrbyfloat('group.'+group+'.backers'+'.usedcash',amount))
+                usedcash = float(r.incrbyfloat('group.'+group+'.usedcash', \
+                        float(r.get('cost.'+group+'.'+tag))))
                 if (usedcash) > pledgedcash:
                     #what a dick
-                    r.incrbyfloat('group.'+group+'.backers'+'.usedcash',-1*amount)
+                    r.incrbyfloat('group.'+group+'.usedcash', \
+                        -1*float(r.get('cost.'+group+'.'+tag)))
                     #need to notify of insufficient funds
                     print "Not enough money left in the bank to buy that!"
                     return
