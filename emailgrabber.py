@@ -1,7 +1,13 @@
 import redis
 import imaplib
+import smtplib
 import sys
 import email
+
+credfile = open('credfile','r')
+USER,PASS,MAILING_LIST,IMAP_SERVER,IMAP_PORT_STRING,SMTP_SERVER,SMTP_PORT_STRING = [x.strip() for x in credfile.readlines()]
+IMAP_PORT = int(IMAP_PORT_STRING)
+SMTP_PORT = int(SMTP_PORT_STRING)
 
 def process_pledge(subject,author,r):
     try:
@@ -15,15 +21,18 @@ def process_pledge(subject,author,r):
     except ValueError as e:
         #notify of idiocy
         print e
+        garbage_notifier(subject,author)
         return
     moneyleft = r.incrbyfloat(author+'.cash',-1*amount)
     if moneyleft<0:
+        #No, no, no
         moneyleft = r.incrbyfloat(author+'.cash',amount)
         print "Can't give more money than you have!"
-        #No, no, no
+        garbage_notifier(subject,author)
         return
     pledge = r.incrbyfloat('user.'+author+'.'+group,amount)
     r.sadd('group.'+group+'.backers',author)
+    success_notifier(subject,author)
     return
 
 def process_unpledge(subject,author,r):
@@ -38,6 +47,7 @@ def process_unpledge(subject,author,r):
     except ValueError as e:
         #notify of idiocy
         print e
+        garbage_notifier(subject,author)
         return
     #remove money from the pledge
     moneyleft = r.incrbyfloat('user.'+author+'.'+group,-1*amount)
@@ -45,10 +55,12 @@ def process_unpledge(subject,author,r):
         moneyleft = r.incrbyfloat('user.'+author+'.'+group,amount)
         print "Can't give back more money than was pledged"
         #No, no, no
+        garbage_notifier(subject,author)
         return
     if moneyleft == 0:
         r.srem('group.'+group+'.backers',author)
     pledge = r.incrbyfloat(author+'.cash',amount)
+    success_notifier(subject,author)
     return
 
 def process_buy(subject,author,r):
@@ -63,20 +75,31 @@ def process_buy(subject,author,r):
     except ValueError as e:
         #notify of idiocy
         print e
+        garbage_notifier(subject,author)
         return
     # new proposal for purchase
     if tag not in r.sunion(group+'.purchases',group+'.proposals'):
         r.sadd('buy.'+group+'.'+tag,author)
         r.sadd(group+'.proposals',tag)
         r.set('cost.'+group+'.'+tag,amount)
+        success_notifier(subject,author,'Added a new purchasing \
+            proposal: '+tag+' at $'+amount)
     #someone came late to the party
     elif tag in r.smembers(group+'.purchases'):
         r.sadd('buy.'+group+'.'+tag,author)
+        success_notifier(subject,author,'Added '+user+' to '+ tag + \
+            'however, enough votes already existed.')
     #people voting for the proposal
     elif tag in r.smembers(group+'.proposals'):
         r.sadd('buy.'+group+'.'+tag,author)
+        success_notifier(subject,author,'Added '+user+' to '+ tag + \
+            'he/she is voter'+str(r.scard('buy.'+group+'.'+tag))+ \
+            'minimum for passage is '+str(r.scard('group.'+group+'.backers')/2
++1))
         #if we have a majority to buy, pull the trigger
         if r.scard('buy.'+group+'.'+tag) > (r.scard('group.'+group+'.backers')/2):
+            success_notifier(subject,author,tag + 'has passed and will be \
+                purchased')
             try:
                 r.smove(group+'.proposals',group+'.purchases',tag)
                 pledgedcash = count_pledgemoney(group,r)
@@ -88,6 +111,7 @@ def process_buy(subject,author,r):
                         -1*float(r.get('cost.'+group+'.'+tag)))
                     #need to notify of insufficient funds
                     print "Not enough money left in the bank to buy that!"
+                    garbage_notifier(subject,author)
                     return
                 #do puchasing stuff
             except:
@@ -99,12 +123,32 @@ def count_pledgemoney(group, r):
         pledgedcash += float(r.get('user.'+user+'.'+group))
     return pledgedcash
 
-def main():
-    credfile = open('credfile','r')
-    USER,PASS,IMAP_SERVER,PORT_STRING = [x.strip() for x in credfile.readlines()]
-    PORT = int(PORT_STRING)
+def garbage_notifier(subject,author):
+    message = email.message.Message()
+    message['To'] = MAILING_LIST
+    message['From'] = USER
+    message['Subject'] = 'Error while working on: '+subject+' from '+author
+    sender =smtplib.SMTP_SSL(SMTP_SERVER, SMTP_PORT)
+    sender.login(USER,PASS)
+    sender.sendmail(USER,MAILING_LIST,str(message))
+    sender.quit()
 
-    recv = imaplib.IMAP4_SSL(IMAP_SERVER,PORT)
+def success_notifier(subject,author,body=None):
+    message = email.message.Message()
+    message['To'] = MAILING_LIST
+    message['From'] = USER
+    message['Subject'] = subject+' from '+author+' acknowledged'
+    sender =smtplib.SMTP_SSL(SMTP_SERVER, SMTP_PORT)
+    sender.login(USER,PASS)
+    if body is not None:
+        sender.sendmail(USER,MAILING_LIST,str(message)+'\r\n'+body)
+    else:
+        sender.sendmail(USER,MAILING_LIST,str(message))
+    sender.quit()
+
+def main():
+
+    recv = imaplib.IMAP4_SSL(IMAP_SERVER,IMAP_PORT)
     recv.login(USER,PASS)
     recv.select()
 
@@ -119,6 +163,7 @@ def main():
         mail = data[0][1]
         message = email.message_from_string(mail)
         subject = message['Subject'].strip()
+        print 'working on',subject
         author = message['From']
         if subject.startswith('PLEDGE'):
             process_pledge(subject,author,r)
